@@ -20,8 +20,34 @@ permissions:
   issues: write      # auto-create failure alerts
 
 jobs:
+  # GitHub Actions does not allow `matrix` inside a job-level `if:` (it is
+  # evaluated before matrix expansion — "Unrecognized named-value: 'matrix'").
+  # So a tiny plan job computes the channel list first, and the produce
+  # matrix below consumes it with fromJSON(). Same behavior as intended:
+  # scheduled/empty dispatch = all 4 channels; a channel picked in the
+  # dispatch form = only that channel.
+  plan:
+    name: Decide channels for this run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      channels: ${{ steps.set.outputs.channels }}
+    steps:
+      - name: Compute the channel list
+        id: set
+        run: |
+          CH='${{ github.event.inputs.channel }}'
+          if [ -z "$CH" ] || [ "$CH" = "all" ]; then
+            echo 'channels=["mindset","facts","tech","money"]' >> "$GITHUB_OUTPUT"
+            echo "This run: all 4 channels."
+          else
+            echo "channels=[\"$CH\"]" >> "$GITHUB_OUTPUT"
+            echo "This run: only '$CH'."
+          fi
+
   produce:
     name: ${{ matrix.channel }} Short
+    needs: plan
     runs-on: ubuntu-latest
     timeout-minutes: 25
     concurrency:
@@ -30,12 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        channel: [mindset, facts, tech, money]
-    # when manually dispatched with one channel, run only that one
-    if: >
-      github.event_name != 'workflow_dispatch' ||
-      github.event.inputs.channel == '' ||
-      github.event.inputs.channel == matrix.channel
+        channel: ${{ fromJSON(needs.plan.outputs.channels) }}
     steps:
       - uses: actions/checkout@v4
 
